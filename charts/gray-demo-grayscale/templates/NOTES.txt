@@ -1,0 +1,23 @@
+{{- $global := . -}}
+{{- $release := .Release -}}
+
+{{- range $serviceName, $serviceValues := .Values.statelessComponents }}
+
+> Get the {{ $serviceName | quote }} URL by running these commands:
+
+{{- if contains "NodePort" $serviceValues.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ $release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ template "gray-demo-grayscale.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ $release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" $serviceValues.service.type }}
+     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+           You can watch the status of by running 'kubectl get svc -w {{ template "gray-demo-grayscale.fullname" $global }}'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ template "gray-demo-grayscale.fullname" $global }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo http://$SERVICE_IP:{{ $serviceValues.service.port }}
+{{- else if contains "ClusterIP" $serviceValues.service.type }}
+  export POD_NAME=$(kubectl get pods --namespace {{ $release.Namespace }} -l "app={{ template "gray-demo-grayscale.name" $global }},release={{ $release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl port-forward $POD_NAME 8080:80
+{{- end }}
+
+{{- end }}

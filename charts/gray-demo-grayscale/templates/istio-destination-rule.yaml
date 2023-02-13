@@ -1,0 +1,39 @@
+{{- if eq .Values.gateway.type "istio-virtual-service" }}
+
+
+  {{- $global := . -}}
+  {{- $release := .Release -}}
+  {{- $fullName := include "gray-demo-grayscale.fullname" $global -}}
+  {{- $gateway := .Values.gateway -}}
+  {{- $subsets := $gateway.subsets -}}
+
+  {{- $components := list -}}
+  {{- range $gateway.routes.http }}
+    {{- range .route }}
+    {{- $components = append $components .destination.component -}}
+    {{- end }}
+  {{- end }}
+  {{- $components = uniq $components }}
+
+  {{- range $components }}
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: {{ $fullName }}-{{ . }}
+  labels:
+    app: {{ template "gray-demo-grayscale.name" $global }}
+    chart: {{ template "gray-demo-grayscale.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+spec:
+  host : {{ $fullName }}-{{ . }}
+  subsets:
+    {{- range $subsets }}
+    - name: {{ .name }}
+      labels:
+        "heimdall.inspures.com/grayscale-subset": {{ .name }}
+    {{- end }}
+  {{- end }}
+
+{{- end }}

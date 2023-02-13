@@ -1,0 +1,67 @@
+{{- $global := . -}}
+{{- $release := .Release -}}
+
+{{- range $services := .Values.statelessComponents }}
+  {{- range $containerValues := $services.containers }}
+    {{- range $values := $containerValues.volumesMounts }}
+      {{- if not (lookup "v1" "PersistentVolumeClaim" $release.Namespace (printf "%s-%s" (include "gray-demo.fullname" $global) $values.name)) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "gray-demo.fullname" $global }}-{{ $values.name }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+    app.kubernetes.io/name: {{ template "gray-demo.chart" $global }}
+    app.kubernetes.io/instance: {{ $release.Name }}
+    app.kubernetes.io/managed-by: {{ $release.Service }}
+  annotations:
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes:
+{{- range $values.accessModes }}
+  - {{ . | quote }}
+{{- end }}
+  resources:
+    requests:
+      storage: {{ $values.size | quote }}
+  storageClassName: {{ $values.storageClass | quote }}
+
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
+
+{{- range .Values.sharedVolumeMounts }}
+  {{- $existedPvcName := printf "%s-%s" (include "gray-demo.fullname" $global) .name }}
+  {{- $existedPvc := lookup "v1" "PersistentVolumeClaim" $release.Namespace $existedPvcName }}
+  {{- if not $existedPvc }}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "gray-demo.fullname" $global }}-{{ .name }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+    app.kubernetes.io/name: {{ template "gray-demo.chart" $global }}
+    app.kubernetes.io/instance: {{ $release.Name }}
+    app.kubernetes.io/managed-by: {{ $release.Service }}
+  annotations:
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ default "20Gi" .size | quote }}
+  storageClassName: {{ .storageClass | quote }}
+  {{- end }}
+{{- end }}

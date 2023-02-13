@@ -1,0 +1,415 @@
+# Default values for gray-demo.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+heimdallAppChart: 1.0.0-beta.4
+# appVersion: latest
+
+lastDeploymentTime: 2019-01-01T00:00:00Z
+
+setup:
+  enabled: false
+  params:
+    tenant:
+      id:
+      code:
+      name:
+global:
+  grayscale:
+    enabled: true
+    # stable / beta / dev-green / dev-blue / canary-green / canary-blue
+    subset: beta
+    host: gray-demo.mytest.com
+
+affinity:
+  &affinity {}
+
+# CSP Cluster Gateway
+gateway:
+  # ingress-nginx / istio-virtual-service
+  type: istio-virtual-service
+  enabled: false
+  tls: false
+  hosts:
+    - gray-demo.mytest.com
+  istioGateways:
+    - gray-demo/mytest-gw
+  ingress:
+    tlsSecretName: tls-cert-com-inspures-wildcard
+    annotations: {}
+  routes:
+    http:
+      - match:
+          - uri:
+              prefix: /
+        route:
+          - destination:
+              component: api
+
+secrets:
+  opaque:
+    passport:
+      passport-client-id: 32
+      passport-client-secret: 32
+
+statelessComponents:
+  api:
+    enbableForceRollingUpdate: true
+    imagePullSecret: csp.docker.iec.io
+    replicas: 1
+    serviceAccount:
+      enabled: false
+      annotations: {}
+    containers:
+      main:
+        image:
+          repository: docker.io/huary/gray-demo
+          tag: beta
+          pullPolicy: IfNotPresent
+        env: {}
+        secrets: {}
+
+        configs:
+          {}
+        connects:
+          postgresql:
+            enabled: false
+            # SPRING_BOOT | CUSTOM | NONE
+            type: SPRING_BOOT
+            schema: public
+          mysql:
+            enabled: false
+            # SPRING_BOOT | CUSTOM | NONE
+            type: NONE
+          redis:
+            enabled: false
+            # SPRING_BOOT | CUSTOM | NONE
+            type: SPRING_BOOT
+          cassandra:
+            enabled: false
+            # SPRING_BOOT | CUSTOM | NONE
+            type: NONE
+          minio:
+            enabled: false
+            # CUSTOM | NONE
+            type: NONE
+        volumesMounts: []
+        ##
+        # 单容器容器组建议直接使用http作为端口名，如果指定特殊命名请确保跟下面service中引用对应好
+        # Only for multi-container pod
+        ##
+        ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+        health:
+          liveness:
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            httpGet:
+              path: /demo/test
+              port: http
+          readiness:
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            httpGet:
+              path: /demo/test
+              port: http
+        resources:
+          limits:
+            cpu: 4000m
+            memory: 8Gi
+          requests:
+            cpu: 1000m
+            memory: 1Gi
+    # Stateless Service - Web 网络配置
+    service:
+      type: NodePort
+
+      ##
+      # 单容器容器组建议直接使用http作为端口名，如果上面有多个容器分别指定不同命名请确保跟下面service中引用对应好
+      # Only for multi-container pod
+      ##
+      ports:
+        - name: http
+          port: 80
+          targetPort: http
+
+    # Stateless Service - Web 调度策略配置
+    nodeSelector: {}
+    tolerations: []
+    affinity:
+      <<: *affinity
+
+##
+# External Dependencies Configs
+#
+external:
+  postgresql:
+    dbms: postgresql
+    host:
+    port: 5432
+    database: gray-demo
+    username: gray-demo
+    secretName: gray-demo-external-rdb
+    secretKey: postgresql-password
+  mysql:
+    dbms: mysql
+    host:
+    port: 3306
+    database: gray-demo
+    username: gray-demo
+    secretName: gray-demo-external-rdb
+    secretKey: postgresql-password
+  redis:
+    host:
+    port: 6379
+    secretName: gray-demo-external-redis
+    secretKey: redis-password
+  cassandra:
+    contactPoints:
+    port: 9042
+    keyspace: gray-demo
+    username: gray-demo
+    secretName: gray-demo-external-cassandra
+    secretKey: cassandra-password
+  minio:
+    endpoint:
+    bucket: gray-demo
+    accessKey: xxxx-xxxx-xxxx-xxxx
+    secretName: gray-demo-external-minio
+
+##
+# Dependencies Configs
+#
+
+
+# PostgreSQL
+postgresql:
+  enabled: false
+  # global:
+  #   imageRegistry: dtojdiw4.mirror.aliyuncs.com
+  clusterDomain: cluster.local
+  serviceAccount:
+    autoMount: true
+  postgresqlMaxConnections: 1020
+  postgresqlPostgresConnectionLimit: 20
+  postgresqlDbUserConnectionLimit: 1000
+  resources:
+    requests:
+      cpu: 4000m
+      memory: 8Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  replication:
+    enabled: true
+    readReplicas: 1
+  # initdbScripts:
+  #   init-gray-demo-db.sql: |
+  #     CREATE TABLE "channel" ( "id" varchar NOT NULL, "name" varchar, "owner" varchar, "enterprise" varchar, "type" varchar, "default_input" int, "state" varchar, "creation_date" timestamp, "last_update" timestamp, "avatar" varchar, "action" varchar, PRIMARY KEY ("id"));
+  initdbScriptsConfigMap: '{{ template "postgresql.fullname" . }}-init'
+  # initdbScriptsSecret:
+  # initdbUser: gray-demo
+  postgresqlUsername: gray-demo
+  postgresqlDatabase: gray-demo
+  persistence:
+    # storageClass: "-"
+    size: 60Gi
+  primary:
+    affinity:
+      <<: *affinity
+  readReplicas:
+    affinity:
+      <<: *affinity
+  metrics:
+    enabled: true
+
+# MySQL
+mysql:
+  enabled: false
+  # global:
+  #   imageRegistry: dtojdiw4.mirror.aliyuncs.com
+  # architecture: standalone
+  architecture: replication
+  clusterDomain: cluster.local
+  serviceAccount:
+    create: true
+  replication:
+    enabled: true
+    readReplicas: 1
+  # initdbScripts:
+  #   init-gray-demo-db.sql: |
+  #     CREATE TABLE "channel" ( "id" varchar NOT NULL, "name" varchar, "owner" varchar, "enterprise" varchar, "type" varchar, "default_input" int, "state" varchar, "creation_date" timestamp, "last_update" timestamp, "avatar" varchar, "action" varchar, PRIMARY KEY ("id"));
+  initdbScriptsConfigMap: '{{ template "mysql.fullname" . }}-init'
+  auth:
+    username: gray-demo
+    database: gray-demo
+  primary:
+    persistence:
+      # storageClass: "-"
+      size: 120Gi
+    resources:
+      requests:
+        cpu: 4000m
+        memory: 8Gi
+      limits:
+        cpu: 4000m
+        memory: 8Gi
+    affinity:
+      <<: *affinity
+  secondary:
+    replicaCount: 1
+    persistence:
+      # storageClass: "-"
+      size: 120Gi
+    resources:
+      requests:
+        cpu: 4000m
+        memory: 8Gi
+      limits:
+        cpu: 4000m
+        memory: 8Gi
+    affinity:
+      <<: *affinity
+  metrics:
+    enabled: true
+
+# Redis
+redis:
+  enabled: false
+  # global:
+  #   imageRegistry: dtojdiw4.mirror.aliyuncs.com
+  # architecture: standalone
+  architecture: replication
+  clusterDomain: cluster.local
+  master:
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      # storageClass: "-"
+      size: 60Gi
+    affinity:
+      <<: *affinity
+  replica:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      # storageClass: "-"
+      size: 60Gi
+    affinity:
+      <<: *affinity
+  sentinel:
+    enabled: false
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+  metrics:
+    enabled: true
+
+# Cassandra
+cassandra:
+  enabled: false
+  # global:
+  #   imageRegistry: ""
+  #   imagePullSecrets: []
+  #   storageClass: ""
+  image:
+    registry: hub.docker.iec.io
+  #   repository: bitnami/cassandra
+  #   tag: 4.0.1-debian-10-r81
+  #   pullPolicy: IfNotPresent
+  #   pullSecrets: []
+  #   debug: false
+  replicaCount: 1
+  clusterDomain: cluster.local
+  cluster:
+    name: gray-demo-cassandra
+    seedCount: 1
+    datacenter: dc1
+    rack: rack1
+  dbUser:
+    user: gray-demo
+  resources:
+    requests:
+      cpu: 4000m
+      memory: 8Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  # existingConfiguration: '{{ template "cassandra.fullname" . }}-conf'
+  initDBConfigMap: '{{ template "cassandra.fullname" . }}-init'
+  # initDBSecret: gray-demo-cassandra
+  persistence:
+    # storageClass: "-"
+    size: 120Gi
+  affinity:
+    <<: *affinity
+  metrics:
+    enabled: true
+
+minio:
+  enabled: false
+  # image:
+  #   repository: quay.io/minio/mc
+  #   tag: RELEASE.2022-03-24T00-43-44Z
+  #   pullPolicy: IfNotPresent
+  # imagePullSecrets:
+  # mcImage:
+  #   repository: quay.io/minio/mc
+  #   tag: RELEASE.2022-03-17T20-25-06Z
+  #   pullPolicy: IfNotPresent
+  # Mode: distributed | standalone
+  mode: distributed
+  replicas: 4
+  clusterDomain: cluster.local
+  buckets:
+    - name: gray-demo
+      policy: none
+      purge: false
+      # set versioning for bucket [true|false]
+      # If the mode is set to standalone, make sure the bucket versioning option is commented out
+      versioning: false
+  policies:
+    - name: gray-demo-server-policy
+      statements:
+        - resources:
+            - "arn:aws:s3:::gray-demo"
+            - "arn:aws:s3:::gray-demo/*"
+          actions:
+            - "s3:*"
+  users:
+    - accessKey: '{{ template "minio.fullname" . }}-app'
+      existingSecret: '{{ template "minio.fullname" . }}-app'
+      existingSecretKey: secretKey
+      policy: gray-demo-server-policy
+  persistence:
+    enabled: true
+    size: 500Gi
+    # storageClass:
+  resources:
+    requests:
+      cpu: 4000m
+      memory: 8Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  affinity:
+    <<: *affinity

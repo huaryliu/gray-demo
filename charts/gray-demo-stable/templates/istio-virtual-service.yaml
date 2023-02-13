@@ -1,0 +1,80 @@
+{{- if and .Values.gateway.enabled (eq .Values.gateway.type "istio-virtual-service") }}
+
+
+{{- $global := . -}}
+{{- $release := .Release -}}
+{{- $fullName := include "gray-demo.fullname" $global -}}
+{{- $gateway := .Values.gateway -}}
+
+
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ $fullName }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+spec:
+  {{- with $gateway.istioGateways }}
+  gateways:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $gateway.hosts }}
+  hosts:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  http:
+
+
+  {{- range $rule := $gateway.routes.http }}
+  - match:
+{{ toYaml $rule.match | indent 4 -}}
+    {{- if $rule.redirect }}
+    redirect:
+{{ toYaml $rule.redirect | indent 6 }}
+    {{- end }}
+
+    {{- if $rule.rewrite }}
+    rewrite:
+{{ toYaml $rule.rewrite | indent 6 }}
+    {{- end }}
+
+
+    {{- if not $rule.redirect }}
+    route:
+
+      {{- range $route := $rule.route }}
+    - destination:
+        {{- if $route.destination.host }}
+        host: {{ $route.destination.host }}
+        {{- end }}
+
+        {{- if $route.destination.component }}
+        host: {{ template "gray-demo.fullname" $global -}} - {{- $route.destination.component }}
+        {{- end }}
+
+        {{- if $route.destination.subset }}
+        subset: {{ $route.destination.subset }}
+        {{- end }}
+
+        {{- if $route.destination.port }}
+        port:
+        {{ toYaml $route.destination.port | indent 2 }}
+        {{- end }}
+
+        {{- if $route.weight }}
+      weight: {{ $route.weight }}
+        {{- end }}
+
+      {{- else }} []
+      {{- end -}}
+
+    {{- end }}
+
+
+  {{- end }}
+{{- end }}

@@ -1,0 +1,226 @@
+{{- $global := . -}}
+{{- $release := .Release -}}
+
+{{- $lastDeploymentTime := .Values.lastDeploymentTime -}}
+
+{{- $grayscale := .Values.global.grayscale -}}
+{{- $sharedVolumeMounts := .Values.sharedVolumeMounts -}}
+{{- $postgresqlValues := .Values.postgresql -}}
+{{- $mysqlValues := .Values.mysql -}}
+{{- $redisValues := .Values.redis -}}
+{{- $cassandraValues := .Values.cassandra -}}
+{{- $minioValues := .Values.minio -}}
+
+{{- range $serviceName, $serviceValues := .Values.statelessComponents }}
+
+  {{- $allVolumesMounts := list -}}
+  {{- range $serviceValues.containers }}
+    {{- $allVolumesMounts = concat $allVolumesMounts .volumesMounts }}
+    {{- range $secretVolume := .secrets }}
+      {{- if .file }}
+        {{- range $secretVolumeName, $secretMountPath := .file }}
+          {{- $allVolumesMounts = concat $allVolumesMounts (list (dict "name" (printf "secret-%s-%s" (tpl $secretVolume.name $global) $secretVolumeName | lower | replace "." "-" | replace "_" "-") "mountPath" $secretMountPath "readOnly" true "volume" (dict "secret" (dict "secretName" (tpl $secretVolume.name $global) "items" (list (dict "key" $secretVolumeName "path" $secretVolumeName)) ) ) ))}}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- range $configVolume := .configs }}
+      {{- if .file }}
+        {{- range $configVolumeName, $configMountPath := .file }}
+          {{- $allVolumesMounts = concat $allVolumesMounts (list (dict "name" (printf "config-%s-%s" (tpl $configVolume.name $global) $configVolumeName | lower | replace "." "-" | replace "_" "-") "mountPath" $configMountPath "readOnly" true "volume" (dict "configMap" (dict "name" (tpl $configVolume.name $global) "items" (list (dict "key" $configVolumeName "path" $configVolumeName)) ) ) ))}}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+
+  {{- $allMountPaths := dict  }}
+  {{- range $sharedVolumeMounts }}
+    {{- $components := list }}
+    {{- range .statelessComponents }}
+      {{- $components = append $components .name }}
+      {{- $_ := set $allMountPaths .name (dict "mountPath" .mountPath "containerMountPath" .containerMountPath) }}
+    {{- end }}
+    {{- if has $serviceName $components }}
+      {{- $allVolumesMounts = append $allVolumesMounts . -}}
+    {{- end }}
+  {{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "gray-demo.fullname" $global }}-{{ $serviceName }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}-{{ $serviceName }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+spec:
+  replicas: {{ $serviceValues.replicas }}
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: {{ template "gray-demo.name" $global }}-{{ $serviceName }}
+      release: {{ $release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ template "gray-demo.name" $global }}-{{ $serviceName }}
+        release: {{ $release.Name }}
+  {{- if and $grayscale.enabled $grayscale.subset }}
+        csp.inspur.com/grayscale-subset: {{ $grayscale.subset }}
+        heimdall.inspures.com/grayscale-subset: {{ $grayscale.subset }}
+        service.istio.io/canonical-revision:  {{ $grayscale.subset }}
+  {{- end }}
+    spec:
+      {{- if $serviceValues.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ $serviceValues.imagePullSecret }}
+      {{- end }}
+      {{- if $serviceValues.serviceAccount.enabled }}
+      serviceAccountName: {{ template "gray-demo.fullname" $global }}-{{ $serviceName }}
+      {{- end}}
+
+      containers:
+
+        {{- range $containerName, $containerValues := $serviceValues.containers }}
+        - name: {{ $containerName }}
+          image: "{{ $containerValues.image.repository }}:{{ template "gray-demo.app.version" (dict "AppVersion" $global.Values.appVersion "ContainerTag" $containerValues.image.tag) }}"
+          imagePullPolicy: {{ $containerValues.image.pullPolicy }}
+          {{- if $containerValues.securityContext }}
+          securityContext: {{- $containerValues.securityContext | toYaml | nindent 12 }}
+          {{- end }}
+          env:
+            {{- if $serviceValues.enbableForceRollingUpdate }}
+            - name: CSP_LAST_DEPLOYMENT_TIME
+              value: {{ $lastDeploymentTime | quote }}
+            {{- end }}
+
+            {{- if $containerValues.env }}
+            {{- $envNames := keys $containerValues.env | sortAlpha -}}
+            {{- range $envName := $envNames }}
+            - name: {{ $envName }}
+              value: {{ tpl (get $containerValues.env $envName) $global | quote }}
+            {{- end }}
+            {{- end }}
+
+            {{- with $containerValues.connects }}
+              {{- if and .postgresql.enabled $postgresqlValues.enabled }}
+                {{- template "renderRdbConnector" (dict "type" .postgresql.type "dbms" "postgresql" "host" (include "postgresql.service.name" $global) "port" 5432 "database" $postgresqlValues.postgresqlDatabase "username" $postgresqlValues.postgresqlUsername "secretName" (default (include "postgresql.fullname" $global) $postgresqlValues.existingSecret) "secretKey" "postgresql-password" "schema" (default "public" .postgresql.schema)  "env" .postgresql.env "global" ) }}
+              {{- else if and .postgresql.enabled $global.Values.external.postgresql.host }}
+                {{- template "renderRdbConnector" (merge (dict "type" .postgresql.type "env" .postgresql.env "global") $global.Values.external.postgresql) }}
+              {{- end }}
+              {{- if and .mysql.enabled $mysqlValues.enabled }}
+                {{- template "renderRdbConnector" (dict "type" .mysql.type "dbms" "mysql" "host" (include "mysql.service.name" $global) "port" 3306 "database" $mysqlValues.auth.database "username" $mysqlValues.auth.username "secretName" (default (include "mysql.fullname" $global) $mysqlValues.existingSecret) "secretKey" "mysql-password" "schema" (default "public" .mysql.schema)  "env" .mysql.env "global" ) }}
+              {{- else if and .mysql.enabled $global.Values.external.mysql.host }}
+                {{- template "renderRdbConnector" (merge (dict "type" .mysql.type "env" .mysql.env "global") $global.Values.external.mysql) }}
+              {{- end }}
+
+              {{- if and .redis.enabled $redisValues.enabled }}
+                {{- template "renderRedisConnector" (dict "type" .redis.type "host" (include "redis.service.name" $global) "port" 6379 "secretName" (default (include "redis.fullname" $global) $redisValues.existingSecret) "secretKey" "redis-password" "env" .redis.env "global" ) }}
+              {{- else if and $global.Values.external.redis.host .redis.enabled }}
+                {{- template "renderRedisConnector" (merge (dict "type" .redis.type "env" .redis.env "global") $global.Values.external.redis) }}
+              {{- end }}
+
+              {{- if and .cassandra.enabled $cassandraValues.enabled }}
+                {{- template "renderCassandraConnector" (dict "type" .cassandra.type "contactPoints" (include "cassandra.service.name" $global) "port" 9042 "keyspace" "gray-demo" "username" $cassandraValues.dbUser.user "secretName" (default (include "cassandra.fullname" $global) $cassandraValues.existingSecret) "secretKey" "cassandra-password" "env" .cassandra.env "global" ) }}
+              {{- else if and $global.Values.external.cassandra.contactPoints .cassandra.enabled }}
+                {{- template "renderCassandraConnector" (merge (dict "type" .cassandra.type "env" .cassandra.env "global") $global.Values.external.cassandra) }}
+              {{- end }}
+
+              {{- if and .minio.enabled $minioValues.enabled }}
+                {{- template "renderS3Connector" (dict "type" .minio.type "endpoint" ( printf "%s://%s" (include "gray-demo.url.scheme" $global) (include "gray-demo.url.domain" $global)) "bucket" (tpl (first $minioValues.buckets).name $global) "accessKey" (tpl (first $minioValues.users).accessKey $global) "secretName" (tpl (first $minioValues.users).existingSecret $global) "secretKey" (tpl (first $minioValues.users).existingSecretKey $global) "env" .minio.env "global" ) }}
+              {{- else if and $global.Values.external.minio.endpoint .minio.enabled }}
+                {{- template "renderS3Connector" (merge (dict "type" .minio.type "env" .minio.env "global") $global.Values.external.minio) }}
+              {{- end }}
+            {{- end }}
+
+            {{- range $containerSecrets := $containerValues.secrets }}
+              {{- range $ek, $ev := $containerSecrets.env }}
+            - name: {{ $ek }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl $containerSecrets.name $global | quote }}
+                  key: {{ $ev }}
+              {{- end }}
+            {{- end }}
+
+            {{- range $containerConfigs := $containerValues.configs }}
+              {{- range $ek, $ev := $containerConfigs.env }}
+            - name: {{ $ek }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ tpl $containerConfigs.name $global | quote }}
+                  key: {{ $ev }}
+              {{- end }}
+            {{- end }}
+
+          ports:
+{{ toYaml $containerValues.ports | indent 12 }}
+          volumeMounts:
+          {{- range $allVolumesMounts }}
+            - name: {{ .name }}
+            {{- if .mountPath }}
+              mountPath: {{ .mountPath }}
+            {{- else }}
+              mountPath: {{ include "getContainerMountPath" (dict "allMountPaths" $allMountPaths "serviceName" $serviceName "containerName" $containerName) }}
+            {{- end }}
+            {{- if .readOnly }}
+              readOnly: true
+            {{- end }}
+          {{- else }} []
+          {{- end }}
+          livenessProbe:
+{{ toYaml $containerValues.health.liveness | indent 12 }}
+          readinessProbe:
+{{ toYaml $containerValues.health.readiness | indent 12 }}
+          resources:
+{{ toYaml $containerValues.resources | indent 12 }}
+        {{- end }}
+          securityContext:
+            privileged: true
+
+    {{- with $serviceValues.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with $serviceValues.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with $serviceValues.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+      volumes:
+      {{- range $allVolumesMounts }}
+        - name: {{ .name }}
+          {{- if .volume }}
+{{ toYaml .volume | indent 10 }}
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ template "gray-demo.fullname" $global }}-{{ .name }}
+          {{- end -}}
+      {{- else }} []
+      {{- end }}
+
+{{- if $serviceValues.serviceAccount.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ template "gray-demo.fullname" $global }}-{{ $serviceName }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}-{{ $serviceName }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+  annotations:
+    {{- toYaml $serviceValues.serviceAccount.annotations | nindent 4 }}
+{{- end }}
+
+{{- end }}

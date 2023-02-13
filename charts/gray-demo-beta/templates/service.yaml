@@ -1,0 +1,28 @@
+{{- $global := . -}}
+{{- $release := .Release -}}
+
+{{- range $serviceName, $serviceValues := .Values.statelessComponents }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "gray-demo.fullname" $global }}-{{ $serviceName }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+spec:
+  type: {{ $serviceValues.service.type }}
+  ports:
+{{ toYaml $serviceValues.service.ports | indent 4}}
+    # - port: {{ $serviceValues.service.port }}
+    #   targetPort: http
+    #   protocol: TCP
+    #   name: http
+  selector:
+    app: {{ template "gray-demo.name" $global }}-{{ $serviceName }}
+    release: {{ $release.Name }}
+
+{{- end }}

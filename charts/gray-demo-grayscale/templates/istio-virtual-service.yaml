@@ -1,0 +1,94 @@
+{{- if eq .Values.gateway.type "istio-virtual-service" }}
+
+
+{{- $global := . -}}
+{{- $release := .Release -}}
+{{- $fullName := include "gray-demo-grayscale.fullname" $global -}}
+{{- $gateway := .Values.gateway -}}
+{{- $subsets := reverse $gateway.subsets -}}
+
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ $fullName }}
+  labels:
+    app: {{ template "gray-demo-grayscale.name" $global }}
+    chart: {{ template "gray-demo-grayscale.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+spec:
+  {{- with $gateway.istioGateways }}
+  gateways:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $gateway.hosts }}
+  hosts:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  http:
+
+
+  {{- range $rule := $gateway.routes.http }}
+  {{- range $subset := $subsets  }}
+  - match:
+    {{- range $rule.match }}
+      - uri:
+          {{ toYaml .uri }}
+      {{- if not $subset.isDefault }}
+        {{- if $rule.subsetParam }}
+          {{- if eq $rule.subsetParam.type "query" }}
+        queryParams:
+          {{ $rule.subsetParam.name }}:
+            exact: {{ $subset.name }}
+          {{- else if eq $rule.subsetParam.type "header" }}
+        headers:
+          User-Agent:
+            regex: .*(Chrome/([\d.]+)).* 
+          {{- else }}
+          {{- end }}
+        {{- else }}
+        headers:
+          User-Agent:
+            regex: .*(Chrome/([\d.]+)).*
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if $rule.redirect }}
+    redirect:
+{{ toYaml $rule.redirect | indent 6 }}
+    {{- end }}
+
+    {{- if $rule.rewrite }}
+    rewrite:
+{{ toYaml $rule.rewrite | indent 6 }}
+    {{- end }}
+
+
+    {{- if not $rule.redirect }}
+    route:
+
+      {{- range $route := $rule.route }}
+      - destination:
+          host: {{ $fullName -}} - {{- $route.destination.component }}
+          subset: {{ $subset.name }}
+
+          {{- if $route.destination.port }}
+          port:
+            {{ toYaml $route.destination.port }}
+          {{- end }}
+
+          {{- if $route.weight }}
+        weight: {{ $route.weight }}
+          {{- end }}
+
+        {{- else }} []
+      {{- end -}}
+
+    {{- end }}
+
+  {{- end }}
+  {{- end }}
+
+{{- end }}

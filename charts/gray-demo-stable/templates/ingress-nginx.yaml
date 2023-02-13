@@ -1,0 +1,211 @@
+{{- $global := . -}}
+{{- $release := .Release -}}
+{{- $fullName := include "gray-demo.fullname" $global -}}
+
+{{- $hosts := .Values.gateway.hosts }}
+{{- $rewriteRoutes := list }}
+{{- $redirectRoutes := list }}
+{{- $proxyRoutes := list }}
+{{- if and .Values.gateway.enabled (eq .Values.gateway.type "ingress-nginx") }}
+  {{- range $httpRoute := .Values.gateway.routes.http }}
+
+    {{- if $httpRoute.rewrite }}
+      {{- $rewriteRoutes = append $rewriteRoutes $httpRoute }}
+    {{- else if $httpRoute.redirect }}
+      {{- $redirectRoutes = append $redirectRoutes $httpRoute }}
+    {{- else }}
+      {{ $proxyRoutes = append $proxyRoutes $httpRoute }}
+    {{- end }}
+
+  {{- end }}
+{{- end }}
+
+
+# Proxy rules
+{{- if $proxyRoutes }}
+---
+apiVersion: {{ include "common.capabilities.ingress.apiVersion" $global }}
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-proxy
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+  annotations:
+  {{- range $k, $v := .Values.gateway.ingress.annotations }}
+    {{ $k }}: {{ $v | quote }}
+  {{- end }}
+spec:
+  {{- if eq "true" (include "common.ingress.supportsIngressClassname" $global) }}
+  ingressClassName: nginx
+  {{- end }}
+  {{- if .Values.gateway.ingress.tlsSecretName }}
+  tls:
+    - hosts:
+      {{- range $hosts }}
+        - {{ . }}
+      {{- end }}
+      secretName: {{ .Values.gateway.ingress.tlsSecretName }}
+  {{- end }}
+  rules:
+  {{- range $hosts }}
+  - host: {{ . }}
+    http:
+      paths:
+      {{- range $route := $proxyRoutes }}
+      {{- range $match := $route.match}}
+        {{- if $match.uri.prefix }}
+        - path: {{ $match.uri.prefix }}
+          {{- if eq "true" (include "common.ingress.supportsPathType" $) }}
+          pathType: Prefix
+          {{- end }}
+          backend:
+          {{- if (first $route.route).destination.port }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" (first $route.route).destination.port.number "context" $global)  | nindent 12 }}
+          {{- else }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" "http" "context" $global)  | nindent 12 }}
+          {{- end }}
+        {{- else if $match.uri.exact }}
+        - path: {{ $match.uri.exact }}
+          {{- if eq "true" (include "common.ingress.supportsPathType" $) }}
+          pathType: Exact
+          {{- end }}
+          backend:
+          {{- if (first $route.route).destination.port }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" (first $route.route).destination.port.number "context" $global)  | nindent 12 }}
+          {{- else }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" "http" "context" $global)  | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- end }}
+  {{- end }}
+{{- end }}
+
+
+# Rewrite rules
+{{- range $routeIndex, $route := $rewriteRoutes }}
+---
+apiVersion: {{ include "common.capabilities.ingress.apiVersion" $global }}
+kind: Ingress
+metadata:
+  name: {{ $fullName -}} -rewrite-to {{- regexReplaceAll "\\$\\d+" ($route.rewrite.uri | replace "/" "-" | lower) "" }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+  annotations:
+  {{- range $k, $v := $global.Values.gateway.ingress.annotations }}
+    {{ $k }}: {{ $v | quote }}
+  {{- end }}
+    nginx.ingress.kubernetes.io/rewrite-target: {{ $route.rewrite.uri }}
+spec:
+  {{- if eq "true" (include "common.ingress.supportsIngressClassname" $global) }}
+  ingressClassName: nginx
+  {{- end }}
+  {{- if $global.Values.gateway.ingress.tlsSecretName }}
+  tls:
+    - hosts:
+      {{- range $hosts }}
+        - {{ . }}
+      {{- end }}
+      secretName: {{ $global.Values.gateway.ingress.tlsSecretName }}
+  {{- end }}
+  rules:
+  {{- range $hosts }}
+  - host: {{ . }}
+    http:
+      paths:
+      {{- range $match := $route.match}}
+        {{- if $match.uri.prefix }}
+        - path: {{ $match.uri.prefix }}
+          {{- if eq "true" (include "common.ingress.supportsPathType" $) }}
+          pathType: Prefix
+          {{- end }}
+          backend:
+          {{- if (first $route.route).destination.port }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" (first $route.route).destination.port.number "context" $global)  | nindent 12 }}
+          {{- else }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" "http" "context" $global)  | nindent 12 }}
+          {{- end }}
+        {{- else if $match.uri.exact }}
+        - path: {{ $match.uri.exact }}
+          {{- if eq "true" (include "common.ingress.supportsPathType" $) }}
+          pathType: Exact
+          {{- end }}
+          backend:
+          {{- if (first $route.route).destination.port }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" (first $route.route).destination.port.number "context" $global)  | nindent 12 }}
+          {{- else }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" "http" "context" $global)  | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+  {{- end }}
+{{- end }}
+
+
+# Redirect rules
+{{- range $routeIndex, $route := $redirectRoutes }}
+---
+apiVersion: {{ include "common.capabilities.ingress.apiVersion" $global }}
+kind: Ingress
+metadata:
+  name: {{ $fullName -}} -redirect-to {{- regexReplaceAll "\\$\\d+" ($route.redirect.uri | replace "/" "-" | lower) "" }}
+  labels:
+    app: {{ template "gray-demo.name" $global }}
+    chart: {{ template "gray-demo.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+  annotations:
+  {{- range $k, $v := $global.Values.gateway.ingress.annotations }}
+    {{ $k }}: {{ $v | quote }}
+  {{- end }}
+    nginx.ingress.kubernetes.io/temporal-redirect: {{ $route.redirect.uri }}
+spec:
+  {{- if eq "true" (include "common.ingress.supportsIngressClassname" $global) }}
+  ingressClassName: nginx
+  {{- end }}
+  {{- if $global.Values.gateway.ingress.tlsSecretName }}
+  tls:
+    - hosts:
+      {{- range $hosts }}
+        - {{ . }}
+      {{- end }}
+      secretName: {{ $global.Values.gateway.ingress.tlsSecretName }}
+  {{- end }}
+  rules:
+  {{- range $hosts }}
+  - host: {{ . }}
+    http:
+      paths:
+      {{- range $match := $route.match}}
+        {{- if $match.uri.prefix }}
+        - path: {{ $match.uri.prefix }}
+          {{- if eq "true" (include "common.ingress.supportsPathType" $) }}
+          pathType: Prefix
+          {{- end }}
+          backend:
+          {{- if (first $route.route).destination.port }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" (first $route.route).destination.port.number "context" $global)  | nindent 12 }}
+          {{- else }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" "http" "context" $global)  | nindent 12 }}
+          {{- end }}
+        {{- else if $match.uri.exact }}
+        - path: {{ $match.uri.exact }}
+          {{- if eq "true" (include "common.ingress.supportsPathType" $) }}
+          pathType: Exact
+          {{- end }}
+          backend:
+          {{- if (first $route.route).destination.port }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" (first $route.route).destination.port.number "context" $global)  | nindent 12 }}
+          {{- else }}
+            {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-%s" $fullName (first $route.route).destination.component) "servicePort" "http" "context" $global)  | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+  {{- end }}
+{{- end }}

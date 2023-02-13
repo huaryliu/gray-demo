@@ -1,0 +1,39 @@
+heimdallGrayscaleChart: 1.0
+
+appChartName: gray-demo
+
+# CSP Cluster Gateway
+gateway:
+  # ingress-nginx / istio-virtual-service
+  type: istio-virtual-service
+  hosts:
+    - gray-scale.mytest.com
+  istioGateways:
+    - gray-demo/mytest-gw
+  ingress:
+    tlsSecretName: tls-cert-com-inspures-wildcard
+    annotations: {}
+  subsets:
+  - name: stable
+    isDefault: true
+  - name: beta
+    # isDefault: false
+  # - name: dev
+  #   # isDefault: false
+  # - name: canary
+  #   # isDefault: false
+  routes:
+    http:
+    - match:
+      - uri:
+          prefix: /
+      route:
+      - destination:
+          component: api
+service:
+  api:
+    ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http

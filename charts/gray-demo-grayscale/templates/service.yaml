@@ -1,0 +1,40 @@
+{{- $global := . -}}
+{{- $release := .Release -}}
+{{- $servicePorts := .Values.service -}}
+
+{{- $appNamePrefix := .Values.appChartName -}}
+{{- $components := list -}}
+{{- range .Values.gateway.routes.http }}
+  {{- range .route }}
+  {{- $components = append $components .destination.component -}}
+  {{- end }}
+{{- end }}
+{{- $components = uniq $components }}
+
+{{- range $components }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "gray-demo-grayscale.fullname" $global }}-{{ . }}
+  labels:
+    app: {{ template "gray-demo-grayscale.name" $global }}
+    chart: {{ template "gray-demo-grayscale.chart" $global }}
+    release: {{ $release.Name }}
+    heritage: {{ $release.Service }}
+spec:
+  type: ClusterIP
+  ports:
+  {{- if get $servicePorts . }}
+{{ toYaml (get $servicePorts .).ports | indent 4}}
+  {{- else }}
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  {{- end }}
+  selector:
+    app: {{ $appNamePrefix }}-{{ . }}
+
+{{- end }}
